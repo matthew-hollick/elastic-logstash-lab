@@ -1,0 +1,17 @@
+server.host: "0.0.0.0"
+server.port: 5601
+# Fleet / Elastic Agent is disabled for now.
+# xpack.fleet.internal.fleetServerStandalone: true
+# xpack.fleet.fleetServerHosts:
+#   - id: default
+#     name: Default
+#     host_urls:
+#       - http://localhost:8220
+#     is_default: true
+# xpack.fleet.outputs:
+#   - id: default
+#     name: Default
+#     type: elasticsearch
+#     hosts:
+#       - http://elasticsearch:9200
+#     is_default: true

@@ -1,0 +1,32 @@
+.env
+.env.*.local
+*.log
+
+# Local Devin / IDE config
+.devin/
+.devin/config.local.json
+
+# Local data and caches
+es-data/
+kibana-data/
+logstash-data/
+fleet-server-data/
+*.local
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+
+# Task / uv artifacts
+.task/
+__pycache__/
+*.pyc
+.uv-cache/
+
+# Misc
+node_modules/

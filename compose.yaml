@@ -1,0 +1,175 @@
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-9.5.3}
+    container_name: logstash-elasticsearch
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    ports:
+      - "127.0.0.1:${ES_PORT:-9200}:9200"
+    environment:
+      - discovery.type=single-node
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.license.self_generated.type=trial
+      - xpack.ml.use_auto_machine_memory_percent=true
+      - ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms128m -Xmx2g}
+      - cluster.routing.allocation.disk.threshold_enabled=false
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl --noproxy '*' --output /dev/null --silent --head --fail -u elastic:$${ELASTIC_PASSWORD} http://elasticsearch:9200",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  kibana_settings:
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-9.5.3}
+    container_name: logstash-kibana-settings
+    restart: 'no'
+    environment:
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - KIBANA_PASSWORD=${KIBANA_PASSWORD}
+    command: >
+      bash -c '
+        echo "Setting kibana_system password";
+        start_time=$$(date +%s);
+        timeout=60;
+        until curl --noproxy "*" -s -u "elastic:$${ELASTIC_PASSWORD}" -X POST http://elasticsearch:9200/_security/user/kibana_system/_password -d "{\"password\":\"$${KIBANA_PASSWORD}\"}" -H "Content-Type: application/json" | grep -q "^{}"; do
+          if [ $$(($$(date +%s) - $$start_time)) -ge $$timeout ]; then
+            echo "Error: Elasticsearch timeout";
+            exit 1;
+          fi;
+          sleep 2;
+        done;
+      '
+
+  kibana:
+    depends_on:
+      kibana_settings:
+        condition: service_completed_successfully
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-9.5.3}
+    container_name: logstash-kibana
+    volumes:
+      - kibana-data:/usr/share/kibana/data
+      - ./config/kibana.yml:/usr/share/kibana/config/kibana.yml:ro
+    ports:
+      - "127.0.0.1:${KIBANA_PORT:-5601}:5601"
+    environment:
+      - SERVER_NAME=kibana
+      - ELASTICSEARCH_HOSTS=["http://elasticsearch:9200"]
+      - ELASTICSEARCH_USERNAME=kibana_system
+      - ELASTICSEARCH_PASSWORD=${KIBANA_PASSWORD}
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
+      - ELASTICSEARCH_PUBLICBASEURL=http://localhost:${ES_PORT:-9200}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl --noproxy '*' -fs http://localhost:5601/api/status | grep -q 'available'",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+
+# Fleet / Elastic Agent are disabled for now.
+#   fleet_settings:
+#     image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-9.5.3}
+#     container_name: logstash-fleet-settings
+#     user: root
+#     restart: 'no'
+#     depends_on:
+#       kibana:
+#         condition: service_healthy
+#     environment:
+#       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+#     command: >
+#       bash -c '
+#         set -e;
+#         echo "Waiting for Kibana Fleet API";
+#         until curl --noproxy "*" -fs -u "elastic:$${ELASTIC_PASSWORD}" http://kibana:5601/api/status >/dev/null 2>&1; do
+#           sleep 2;
+#         done;
+#         echo "Running Fleet setup";
+#         curl --noproxy "*" -fs -u "elastic:$${ELASTIC_PASSWORD}" -X POST http://kibana:5601/api/fleet/setup -H "kbn-xsrf: true";
+#         echo "Creating Fleet Server policy";
+#         curl --noproxy "*" -fs -u "elastic:$${ELASTIC_PASSWORD}" -X POST http://kibana:5601/api/fleet/agent_policies -H "Content-Type: application/json" -H "kbn-xsrf: true" -d "{\"id\":\"fleet-server-policy\",\"name\":\"Fleet Server Policy\",\"namespace\":\"default\",\"is_default_fleet_server\":true,\"has_fleet_server\":true,\"monitoring_enabled\":[]}" || echo "Policy may already exist";
+#         echo "Creating Fleet Server service token";
+#         TOKEN_RESPONSE=$$(curl --noproxy "*" -fs -u "elastic:$${ELASTIC_PASSWORD}" -X POST http://kibana:5601/api/fleet/service_tokens -H "kbn-xsrf: true");
+#         TOKEN=$$(echo "$$TOKEN_RESPONSE" | grep -o "\"value\":\"[^\"]*" | sed "s/\"value\":\"//");
+#         if [ -z "$$TOKEN" ]; then
+#           echo "Failed to create service token";
+#           exit 1;
+#         fi;
+#         mkdir -p /fleet-config;
+#         echo "$$TOKEN" > /fleet-config/service-token;
+#         echo "Fleet Server service token created";
+#       '
+#     volumes:
+#       - fleet-server-config:/fleet-config
+#
+#   fleet-server:
+#     image: docker.elastic.co/elastic-agent/elastic-agent:${ELASTIC_VERSION:-9.5.3}
+#     container_name: logstash-fleet-server
+#     user: root
+#     restart: unless-stopped
+#     depends_on:
+#       fleet_settings:
+#         condition: service_completed_successfully
+#     volumes:
+#       - fleet-server-data:/usr/share/elastic-agent/state
+#       - fleet-server-config:/usr/share/elastic-agent/fleet-config:ro
+#     ports:
+#       - "127.0.0.1:${FLEET_SERVER_PORT:-8220}:8220"
+#     environment:
+#       - FLEET_SERVER_ENABLE=true
+#       - FLEET_SERVER_HOST=0.0.0.0
+#       - FLEET_SERVER_PORT=8220
+#       - FLEET_SERVER_ELASTICSEARCH_HOST=http://elasticsearch:9200
+#       - FLEET_SERVER_INSECURE_HTTP=true
+#       - FLEET_SERVER_POLICY_ID=fleet-server-policy
+#       - FLEET_URL=http://localhost:${FLEET_SERVER_PORT:-8220}
+#       - FLEET_SERVER_SERVICE_TOKEN_PATH=/usr/share/elastic-agent/fleet-config/service-token
+#     healthcheck:
+#       test:
+#         [
+#           "CMD-SHELL",
+#           "curl --noproxy '*' -fs http://localhost:8220/api/status | grep -q HEALTHY",
+#         ]
+#       interval: 10s
+#       timeout: 10s
+#       retries: 120
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:${ELASTIC_VERSION:-9.5.3}
+    container_name: logstash-logstash
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    environment:
+      - LS_JAVA_OPTS=${LS_JAVA_OPTS:--Xms512m -Xmx512m}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+    ports:
+      - "127.0.0.1:${LOGSTASH_SYSLOG_PORT:-1514}:1514"
+      - "127.0.0.1:${LOGSTASH_API_PORT:-9600}:9600"
+    volumes:
+      - ${PIPELINE_DIR:-./pipeline}:/usr/share/logstash/pipeline:ro
+      - ./config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+      - logstash-data:/usr/share/logstash/data
+    restart: unless-stopped
+
+volumes:
+  es-data:
+  kibana-data:
+# fleet-server-data:
+# fleet-server-config:
+  logstash-data:
