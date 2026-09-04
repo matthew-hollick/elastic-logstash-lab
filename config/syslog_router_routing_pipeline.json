@@ -31,6 +31,7 @@
     {
       "set": {
         "tag": "set_tz_offset",
+        "description": "Sets _conf.tz_offset to UTC for events whose upstream reroute_config would have set it: cisco_asa, cisco_ftd and cisco_ios.",
         "field": "_conf.tz_offset",
         "value": "UTC",
         "if": "ctx._conf?.dataset != null && (ctx._conf.dataset == 'cisco_asa.log' || ctx._conf.dataset == 'cisco_ftd.log' || ctx._conf.dataset == 'cisco_ios.log')"
@@ -39,6 +40,7 @@
     {
       "set": {
         "tag": "set_internal_zones_asa_ftd",
+        "description": "Sets _temp_.internal_zones for events whose upstream reroute_config includes it: cisco_asa and cisco_ftd.",
         "field": "_temp_.internal_zones",
         "value": ["trust"],
         "if": "ctx._conf?.dataset == 'cisco_asa.log' || ctx._conf?.dataset == 'cisco_ftd.log'"
@@ -47,6 +49,7 @@
     {
       "set": {
         "tag": "set_external_zones_asa_ftd",
+        "description": "Sets _temp_.external_zones for events whose upstream reroute_config includes it: cisco_asa and cisco_ftd.",
         "field": "_temp_.external_zones",
         "value": ["untrust"],
         "if": "ctx._conf?.dataset == 'cisco_asa.log' || ctx._conf?.dataset == 'cisco_ftd.log'"
