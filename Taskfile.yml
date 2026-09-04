@@ -107,6 +107,31 @@ tasks:
       - task wait
       - uvx --from '{{.LOGSIM}}' logsim-syslog --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
 
+  install-integrations:
+    desc: Install Elastic integration packages into Kibana
+    cmds:
+      - |
+        set -e
+        ELASTIC_PASSWORD=$(grep '^ELASTIC_PASSWORD=' .env | cut -d= -f2-)
+        KIBANA_PORT=$(grep '^KIBANA_PORT=' .env | cut -d= -f2-)
+        KIBANA_URL="http://127.0.0.1:${KIBANA_PORT:-5601}"
+        for i in $(seq 1 60); do
+          if curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" "${KIBANA_URL}/api/status" >/dev/null 2>&1; then
+            break
+          fi
+          if [ "$i" -eq 60 ]; then
+            echo "Kibana did not become ready" >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        for pkg in "tcp:2.3.1" "syslog_router:1.0.1" "cisco_asa:2.46.0" "cisco_ios:1.36.0" "cisco_ftd:3.13.12"; do
+          name="${pkg%%:*}"
+          version="${pkg##*:}"
+          echo "Installing ${name} @ ${version}"
+          curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X POST "${KIBANA_URL}/api/fleet/epm/packages/${name}/${version}" -H "kbn-xsrf: true" -H "Content-Type: application/json" -d '{"force":true}'
+        done
+
   exec:
     desc: Open an interactive shell inside the running Logstash container
     cmds:
