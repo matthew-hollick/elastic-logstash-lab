@@ -35,7 +35,7 @@ Endpoints:
 - Kibana: `http://localhost:5601`
 - Logstash monitoring API: `http://localhost:9600`
 
-The stack exposes two syslog TCP inputs on ports `1514` and `1515`. Port `1515` tags events for the `syslog_router` integration so Cisco ASA/FTD/IOS events can be routed to their correct data streams.
+The stack exposes a syslog TCP input on port `1514` and a raw TCP input on port `1515`. Port `1515` tags events for the `syslog_router` integration; the Logstash filter routes Cisco ASA/FTD/IOS events to the correct integration data stream.
 
 Tail the logs:
 
@@ -95,7 +95,7 @@ This installs `tcp`, `syslog_router`, `cisco_asa`, `cisco_ios`, and `cisco_ftd`.
 
 Edit or add `.conf` files under `pipeline/`. Logstash checks for pipeline changes every three seconds and reloads them automatically. All files in the directory are combined into the main pipeline in lexical order:
 
-- `01-input.conf` — syslog inputs on ports `1514` and `1515`
+- `01-input.conf` — syslog input on port `1514` and raw TCP input on port `1515`
 - `20-filter.conf` — routing/filtering logic (e.g. `syslog_router` integration routing)
 - `99-output.conf` — Elasticsearch output
 
