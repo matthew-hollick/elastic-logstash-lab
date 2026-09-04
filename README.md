@@ -35,6 +35,8 @@ Endpoints:
 - Kibana: `http://localhost:5601`
 - Logstash monitoring API: `http://localhost:9600`
 
+The stack exposes two syslog TCP inputs on ports `1514` and `1515`. Port `1515` tags events for the `syslog_router` integration so Cisco ASA/FTD/IOS events can be routed to their correct data streams.
+
 Tail the logs:
 
 ```sh
@@ -63,7 +65,7 @@ task smoke
 
 ## Stream log simulator data
 
-The [log-simulators](https://github.com/matthew-hollick/log-simulators) repo can stream realistic syslog into Logstash on TCP port `1514`.
+The [log-simulators](https://github.com/matthew-hollick/log-simulators) repo can stream realistic syslog into Logstash on TCP port `1514` (plain syslog) or `1515` (syslog-router tagged events for integration routing).
 
 ```sh
 LOGSIM_DURATION=10s task logsim-asa      # Cisco ASA firewall syslog
@@ -79,9 +81,23 @@ You can override the rate and duration:
 LOGSIM_RATE=50 LOGSIM_DURATION=5m task logsim-asa
 ```
 
+## Install integration packages
+
+Before routing events to the Cisco integration data streams, install the required packages into Kibana:
+
+```sh
+task install-integrations
+```
+
+This installs `tcp`, `syslog_router`, `cisco_asa`, `cisco_ios`, and `cisco_ftd`.
+
 ## Use a custom pipeline
 
-Edit or add `.conf` files under `pipeline/`. Logstash checks for pipeline changes every three seconds and reloads them automatically. All files in the directory are combined into the main pipeline.
+Edit or add `.conf` files under `pipeline/`. Logstash checks for pipeline changes every three seconds and reloads them automatically. All files in the directory are combined into the main pipeline in lexical order:
+
+- `01-input.conf` — syslog inputs on ports `1514` and `1515`
+- `20-filter.conf` — routing/filtering logic (e.g. `syslog_router` integration routing)
+- `99-output.conf` — Elasticsearch output
 
 To load pipeline files from another directory, set `PIPELINE_DIR` to an absolute path:
 
@@ -112,6 +128,7 @@ task validate
 | `task logsim-asa` | Stream Cisco ASA syslog into Logstash |
 | `task logsim-ftd` | Stream Cisco FTD syslog into Logstash |
 | `task logsim-syslog` | Stream Linux syslog into Logstash |
+| `task install-integrations` | Install Elastic integration packages into Kibana |
 | `task exec` | Open an interactive shell inside the running Logstash container |
 | `task clean` | Remove containers, networks, and volumes |
 
@@ -129,7 +146,9 @@ Environment variables are read from `.env` automatically by Docker Compose. They
 | `LS_JAVA_OPTS` | `-Xms512m -Xmx512m` | Logstash JVM options |
 | `ES_PORT` | `9200` | Host port for Elasticsearch |
 | `KIBANA_PORT` | `5601` | Host port for Kibana |
-| `LOGSTASH_SYSLOG_PORT` | `1514` | Host port for the syslog TCP input |
+| `SYSLOG_TIMEZONE` | `UTC` | Timezone used when generating syslog timestamps in tasks and pipelines |
+| `LOGSTASH_SYSLOG_PORT` | `1514` | Host port for the plain syslog TCP input |
+| `LOGSTASH_SYSLOG_ROUTER_PORT` | `1515` | Host port for the syslog-router tagged TCP input |
 | `LOGSTASH_API_PORT` | `9600` | Host port for the Logstash monitoring API |
 | `PIPELINE_DIR` | `./pipeline` | Host directory containing pipeline `.conf` files |
 | `LOGSIM` | `git+https://github.com/matthew-hollick/log-simulators` | Git URL for log-simulators |
@@ -138,7 +157,7 @@ Environment variables are read from `.env` automatically by Docker Compose. They
 
 Port `1514` is used for syslog instead of the standard `514` so Logstash does not need root privileges inside the container. Point simulators at `tcp://127.0.0.1:1514`.
 
-The default `pipeline/main.conf` sends all events to the `elastic` user at `http://elasticsearch:9200` using the index pattern `logstash-%{+YYYY.MM.dd}`. Configure filters and outputs as needed after the connection is working.
+The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://elasticsearch:9200`. Events received on port `1515` are tagged for the `syslog_router` integration; the integration's ingest pipeline reroutes them to the correct data stream based on the event contents. Configure filters and outputs as needed after the connection is working.
 
 ## Security notes
 

@@ -158,8 +158,10 @@ services:
     environment:
       - LS_JAVA_OPTS=${LS_JAVA_OPTS:--Xms512m -Xmx512m}
       - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - SYSLOG_TIMEZONE=${SYSLOG_TIMEZONE:-UTC}
     ports:
       - "127.0.0.1:${LOGSTASH_SYSLOG_PORT:-1514}:1514"
+      - "127.0.0.1:${LOGSTASH_SYSLOG_ROUTER_PORT:-1515}:1515"
       - "127.0.0.1:${LOGSTASH_API_PORT:-9600}:9600"
     volumes:
       - ${PIPELINE_DIR:-./pipeline}:/usr/share/logstash/pipeline:ro

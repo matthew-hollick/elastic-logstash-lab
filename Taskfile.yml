@@ -7,6 +7,8 @@ vars:
   LOGSIM_RATE: '{{default "10" .LOGSIM_RATE}}'
   LOGSIM_DURATION: '{{default "30s" .LOGSIM_DURATION}}'
   LOGSIM: '{{default "git+https://github.com/matthew-hollick/log-simulators" .LOGSIM}}'
+  SYSLOG_TIMEZONE:
+    sh: 'grep -s "^SYSLOG_TIMEZONE=" .env 2>/dev/null | cut -d= -f2- | tr -d "\n" || echo UTC'
 
 tasks:
   default:
@@ -74,7 +76,7 @@ tasks:
     desc: Send a test syslog line to the TCP input
     cmds:
       - |
-        bash -c 'printf "<14>%s %s: %s\n" "$(date "+%b %e %H:%M:%S")" "logstash-test" "hello from task send" > /dev/tcp/localhost/{{.LOGSTASH_SYSLOG_PORT}}'
+        bash -c 'printf "<14>%s %s: %s\n" "$(TZ="{{.SYSLOG_TIMEZONE}}" date "+%b %e %H:%M:%S")" "logstash-test" "hello from task send" > /dev/tcp/localhost/{{.LOGSTASH_SYSLOG_PORT}}'
 
   smoke:
     desc: Start Logstash, send a test syslog event, print the resulting logs, then stop
@@ -91,21 +93,21 @@ tasks:
     cmds:
       - task start
       - task wait
-      - uvx --from '{{.LOGSIM}}' logsim-asa --syslog-header --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
+      - uvx --from '{{.LOGSIM}}' logsim-asa --syslog-header --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
 
   logsim-ftd:
     desc: Stream Cisco FTD syslog into Logstash
     cmds:
       - task start
       - task wait
-      - uvx --from '{{.LOGSIM}}' logsim-ftd --syslog-header --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
+      - uvx --from '{{.LOGSIM}}' logsim-ftd --syslog-header --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
 
   logsim-syslog:
     desc: Stream Linux syslog into Logstash
     cmds:
       - task start
       - task wait
-      - uvx --from '{{.LOGSIM}}' logsim-syslog --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
+      - uvx --from '{{.LOGSIM}}' logsim-syslog --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
 
   install-integrations:
     desc: Install Elastic integration packages into Kibana
