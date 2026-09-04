@@ -41,6 +41,51 @@ The stack exposes three syslog inputs:
 - Port `1515` — raw `tcp` input tagged for the `syslog_router` integration; the Elasticsearch `logs-syslog_router.log@custom` ingest pipeline routes Cisco ASA/FTD/IOS events to the correct integration data stream.
 - Port `1516` — raw `tcp` input for source-IP-based routing using the dictionary file `config/ip_to_integration.csv`. Matched events are written to the corresponding integration data stream; unmatched events fall back to `logs-generic-default`.
 
+## Data flows
+
+```mermaid
+flowchart LR
+    Source[Syslog sources]
+    In1514["Port 1514<br/>syslog input"]
+    In1515["Port 1515<br/>raw tcp input"]
+    In1516["Port 1516<br/>raw tcp input"]
+    ES[(Elasticsearch)]
+
+    Source --> In1514
+    Source --> In1515
+    Source --> In1516
+    In1514 --> ES
+    In1515 --> ES
+    In1516 --> ES
+```
+
+### Port 1514 — plain syslog
+
+```mermaid
+flowchart LR
+    A["Port 1514<br/>syslog input"] -->|"data_stream: logs-generic-default"| B["logs-generic-default"]
+```
+
+### Port 1515 — syslog_router content-based routing
+
+```mermaid
+flowchart LR
+    A["Port 1515<br/>raw tcp input<br/>syslog_router=true"] -->|"data_stream.dataset: syslog_router.log"| B["logs-syslog_router.log-default"]
+    B -->|"_conf.dataset: cisco_asa.log"| C["logs-cisco_asa.log-default"]
+    B -->|"_conf.dataset: cisco_ftd.log"| D["logs-cisco_ftd.log-default"]
+    B -->|"_conf.dataset: cisco_ios.log"| E["logs-cisco_ios.log-default"]
+    B -->|"no match"| F["logs-syslog_router.log-default<br/>(catch-all)"]
+```
+
+### Port 1516 — source-IP dictionary routing
+
+```mermaid
+flowchart LR
+    A["Port 1516<br/>raw tcp input<br/>syslog_dict=true"] -->|"translate source IP"| B{"Dictionary lookup"}
+    B -->|"matched"| C["logs-<integration>.log-default"]
+    B -->|"unmatched"| D["logs-generic-default"]
+```
+
 Tail the logs:
 
 ```sh
