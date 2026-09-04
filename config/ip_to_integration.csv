@@ -1,0 +1,6 @@
+# IP address to integration dataset mapping for source-IP-based routing.
+# The value must be a valid data_stream dataset name (e.g. cisco_ftd.log).
+# Unmatched source IPs are sent to the generic syslog data stream.
+10.0.0.1,cisco_ftd.log
+10.0.0.2,cisco_asa.log
+192.168.1.1,cisco_ios.log

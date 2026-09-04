@@ -35,7 +35,11 @@ Endpoints:
 - Kibana: `http://localhost:5601`
 - Logstash monitoring API: `http://localhost:9600`
 
-The stack exposes a syslog TCP input on port `1514` and a raw TCP input on port `1515`. Port `1515` tags events for the `syslog_router` integration; the Elasticsearch `logs-syslog_router.log@custom` ingest pipeline routes Cisco ASA/FTD/IOS events to the correct integration data stream.
+The stack exposes three syslog inputs:
+
+- Port `1514` — `syslog` input for plain syslog (written to `logs-generic-default`).
+- Port `1515` — raw `tcp` input tagged for the `syslog_router` integration; the Elasticsearch `logs-syslog_router.log@custom` ingest pipeline routes Cisco ASA/FTD/IOS events to the correct integration data stream.
+- Port `1516` — raw `tcp` input for source-IP-based routing using the dictionary file `config/ip_to_integration.csv`. Matched events are written to the corresponding integration data stream; unmatched events fall back to `logs-generic-default`.
 
 Tail the logs:
 
@@ -95,8 +99,8 @@ This installs the `tcp`, `syslog_router`, `cisco_asa`, `cisco_ios`, and `cisco_f
 
 Edit or add `.conf` files under `pipeline/`. Logstash checks for pipeline changes every three seconds and reloads them automatically. All files in the directory are combined into the main pipeline in lexical order:
 
-- `01-input.conf` — syslog input on port `1514` and raw TCP input on port `1515`
-- `20-filter.conf` — adds `syslog_router` data_stream fields so events are written to the syslog_router data stream
+- `01-input.conf` — syslog input on port `1514` and raw TCP inputs on ports `1515` and `1516`
+- `20-filter.conf` — adds `syslog_router` data_stream fields and performs source-IP dictionary lookup for port `1516` events
 - `99-output.conf` — Elasticsearch output
 
 To load pipeline files from another directory, set `PIPELINE_DIR` to an absolute path:
@@ -149,6 +153,7 @@ Environment variables are read from `.env` automatically by Docker Compose. They
 | `SYSLOG_TIMEZONE` | `UTC` | Timezone used when generating syslog timestamps in tasks and pipelines |
 | `LOGSTASH_SYSLOG_PORT` | `1514` | Host port for the plain syslog TCP input |
 | `LOGSTASH_SYSLOG_ROUTER_PORT` | `1515` | Host port for the syslog-router tagged TCP input |
+| `LOGSTASH_SYSLOG_DICT_PORT` | `1516` | Host port for the source-IP dictionary-routed TCP input |
 | `LOGSTASH_API_PORT` | `9600` | Host port for the Logstash monitoring API |
 | `PIPELINE_DIR` | `./pipeline` | Host directory containing pipeline `.conf` files |
 | `LOGSIM` | `git+https://github.com/matthew-hollick/log-simulators` | Git URL for log-simulators |
@@ -157,7 +162,7 @@ Environment variables are read from `.env` automatically by Docker Compose. They
 
 Port `1514` is used for syslog instead of the standard `514` so Logstash does not need root privileges inside the container. Point simulators at `tcp://127.0.0.1:1514`.
 
-The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://elasticsearch:9200`. Events received on port `1515` are tagged for the `syslog_router` data stream; the `logs-syslog_router.log@custom` ingest pipeline inspects the message content and sets `_conf.dataset` so the syslog_router integration reroutes Cisco ASA/FTD/IOS events to the correct data stream. Events that do not match any pattern remain in the `logs-syslog_router.log-default` catch-all data stream. Configure filters and outputs as needed after the connection is working.
+The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://elasticsearch:9200`. Events received on port `1515` are tagged for the `syslog_router` data stream; the `logs-syslog_router.log@custom` ingest pipeline inspects the message content and sets `_conf.dataset` so the syslog_router integration reroutes Cisco ASA/FTD/IOS events to the correct data stream. Events that do not match any pattern remain in the `logs-syslog_router.log-default` catch-all data stream. Events received on port `1516` are routed by source IP using `config/ip_to_integration.csv`; matched events are written to the corresponding integration data stream and unmatched events fall through to `logs-generic-default`. Configure filters and outputs as needed after the connection is working.
 
 ## Security notes
 
