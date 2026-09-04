@@ -35,7 +35,7 @@ Endpoints:
 - Kibana: `http://localhost:5601`
 - Logstash monitoring API: `http://localhost:9600`
 
-The stack exposes a syslog TCP input on port `1514` and a raw TCP input on port `1515`. Port `1515` tags events for the `syslog_router` integration; the Logstash filter routes Cisco ASA/FTD/IOS events to the correct integration data stream.
+The stack exposes a syslog TCP input on port `1514` and a raw TCP input on port `1515`. Port `1515` tags events for the `syslog_router` integration; the Elasticsearch `logs-syslog_router.log@custom` ingest pipeline routes Cisco ASA/FTD/IOS events to the correct integration data stream.
 
 Tail the logs:
 
@@ -89,14 +89,14 @@ Before routing events to the Cisco integration data streams, install the require
 task install-integrations
 ```
 
-This installs `tcp`, `syslog_router`, `cisco_asa`, `cisco_ios`, and `cisco_ftd`.
+This installs the `tcp`, `syslog_router`, `cisco_asa`, `cisco_ios`, and `cisco_ftd` integration packages, and also installs the `logs-syslog_router.log@custom` ingest pipeline that performs the Cisco syslog routing in Elasticsearch.
 
 ## Use a custom pipeline
 
 Edit or add `.conf` files under `pipeline/`. Logstash checks for pipeline changes every three seconds and reloads them automatically. All files in the directory are combined into the main pipeline in lexical order:
 
 - `01-input.conf` — syslog input on port `1514` and raw TCP input on port `1515`
-- `20-filter.conf` — routing/filtering logic (e.g. `syslog_router` integration routing)
+- `20-filter.conf` — adds `syslog_router` data_stream fields so events are written to the syslog_router data stream
 - `99-output.conf` — Elasticsearch output
 
 To load pipeline files from another directory, set `PIPELINE_DIR` to an absolute path:
@@ -128,7 +128,7 @@ task validate
 | `task logsim-asa` | Stream Cisco ASA syslog into Logstash |
 | `task logsim-ftd` | Stream Cisco FTD syslog into Logstash |
 | `task logsim-syslog` | Stream Linux syslog into Logstash |
-| `task install-integrations` | Install Elastic integration packages into Kibana |
+| `task install-integrations` | Install Elastic integration packages and the syslog_router routing pipeline |
 | `task exec` | Open an interactive shell inside the running Logstash container |
 | `task clean` | Remove containers, networks, and volumes |
 
@@ -157,7 +157,7 @@ Environment variables are read from `.env` automatically by Docker Compose. They
 
 Port `1514` is used for syslog instead of the standard `514` so Logstash does not need root privileges inside the container. Point simulators at `tcp://127.0.0.1:1514`.
 
-The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://elasticsearch:9200`. Events received on port `1515` are tagged for the `syslog_router` integration; the integration's ingest pipeline reroutes them to the correct data stream based on the event contents. Configure filters and outputs as needed after the connection is working.
+The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://elasticsearch:9200`. Events received on port `1515` are tagged for the `syslog_router` data stream; the `logs-syslog_router.log@custom` ingest pipeline inspects the message content and sets `_conf.dataset` so the syslog_router integration reroutes Cisco ASA/FTD/IOS events to the correct data stream. Events that do not match any pattern remain in the `logs-syslog_router.log-default` catch-all data stream. Configure filters and outputs as needed after the connection is working.
 
 ## Security notes
 
