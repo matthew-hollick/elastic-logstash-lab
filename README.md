@@ -2,6 +2,14 @@
 
 Run a minimal Elastic stack locally in Docker: Elasticsearch, Logstash and Kibana, with Logstash configured to send syslog input to Elasticsearch.
 
+This project demonstrates **three different approaches to ingesting flavoured syslog data**, each exposed on its own TCP input:
+
+1. **Plain syslog ingestion** — port `1514`. A standard `syslog` input that writes all events to the generic `logs-generic-default` data stream without identifying the source type.
+2. **Content-based routing with `syslog_router`** — port `1515`. A raw `tcp` input that forwards events to the `syslog_router` integration data stream. An Elasticsearch ingest pipeline inspects the message contents (for patterns such as `%ASA-`, `%FTD-` or Cisco IOS identifiers) and reroutes matching events to the appropriate Cisco integration data stream.
+3. **Source-IP dictionary routing** — port `1516`. A raw `tcp` input that uses a Logstash `translate` filter to look up the sender's IP address in `config/ip_to_integration.csv`. The lookup result sets the target integration data stream; unmatched events fall back to `logs-generic-default`.
+
+The two more sophisticated approaches (ports `1515` and `1516`) both **identify the data type** from the incoming event — either from message content or from source address — and **route the event to the matching Elastic integration data stream** so it is parsed and indexed with the correct schema.
+
 This is a local-development setup only, based on Elastic's [`start-local`](https://www.elastic.co/docs/deploy-manage/deploy/self-managed/local-development-installation-quickstart) quickstart.
 
 ## Requirements
