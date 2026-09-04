@@ -4,6 +4,7 @@ vars:
   COMPOSE: docker-compose
   PIPELINE_DIR: '{{default "./pipeline" .PIPELINE_DIR}}'
   LOGSTASH_SYSLOG_PORT: '{{default "1514" .LOGSTASH_SYSLOG_PORT}}'
+  LOGSTASH_SYSLOG_ROUTER_PORT: '{{default "1515" .LOGSTASH_SYSLOG_ROUTER_PORT}}'
   LOGSIM_RATE: '{{default "10" .LOGSIM_RATE}}'
   LOGSIM_DURATION: '{{default "30s" .LOGSIM_DURATION}}'
   LOGSIM: '{{default "git+https://github.com/matthew-hollick/log-simulators" .LOGSIM}}'
@@ -89,18 +90,18 @@ tasks:
       - task stop
 
   logsim-asa:
-    desc: Stream Cisco ASA syslog into Logstash
+    desc: Stream Cisco ASA syslog into Logstash via the syslog_router port
     cmds:
       - task start
       - task wait
-      - uvx --from '{{.LOGSIM}}' logsim-asa --syslog-header --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
+      - uvx --from '{{.LOGSIM}}' logsim-asa --syslog-header --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_ROUTER_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
 
   logsim-ftd:
-    desc: Stream Cisco FTD syslog into Logstash
+    desc: Stream Cisco FTD syslog into Logstash via the syslog_router port
     cmds:
       - task start
       - task wait
-      - uvx --from '{{.LOGSIM}}' logsim-ftd --syslog-header --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
+      - uvx --from '{{.LOGSIM}}' logsim-ftd --syslog-header --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_ROUTER_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
 
   logsim-syslog:
     desc: Stream Linux syslog into Logstash
