@@ -4,6 +4,7 @@
     {
       "set": {
         "tag": "route_cisco_asa",
+        "description": "Equivalent Elastic Agent reroute_config:\n- if:\n    and:\n      - not.has_fields: _conf.dataset\n      - regexp.message: \"%ASA-\"\n  then:\n    - add_fields:\n        target: ''\n        fields:\n          _conf.dataset: cisco_asa.log\n          _conf.tz_offset: UTC\n          _temp_.internal_zones: ['trust']\n          _temp_.external_zones: ['untrust']",
         "field": "_conf.dataset",
         "value": "cisco_asa.log",
         "if": "ctx.message =~ /%ASA-/"
@@ -12,6 +13,7 @@
     {
       "set": {
         "tag": "route_cisco_ftd",
+        "description": "Equivalent Elastic Agent reroute_config:\n- if:\n    and:\n      - not.has_fields: _conf.dataset\n      - regexp.message: \"%FTD-\"\n  then:\n    - add_fields:\n        target: ''\n        fields:\n          _conf.dataset: cisco_ftd.log\n          _conf.tz_offset: UTC\n          _temp_.internal_zones: ['trust']\n          _temp_.external_zones: ['untrust']",
         "field": "_conf.dataset",
         "value": "cisco_ftd.log",
         "if": "ctx._conf?.dataset == null && ctx.message =~ /%FTD-/"
@@ -20,6 +22,7 @@
     {
       "set": {
         "tag": "route_cisco_ios",
+        "description": "Equivalent Elastic Agent reroute_config:\n- if:\n    and:\n      - not.has_fields: _conf.dataset\n      - regexp.message: \"%\\\\S+-\\\\d-\\\\S+\\\\s?:\"\n  then:\n    - add_fields:\n        target: ''\n        fields:\n          _conf.dataset: cisco_ios.log\n          _conf.tz_offset: UTC",
         "field": "_conf.dataset",
         "value": "cisco_ios.log",
         "if": "ctx._conf?.dataset == null && ctx.message =~ /%[A-Za-z]+-[0-9]-[^ :]+:/"
