@@ -38,6 +38,12 @@ task start
 
 This starts Elasticsearch, then Kibana, and finally Logstash once Elasticsearch is healthy.
 
+If you want to route events to the Cisco integration data streams via `syslog_router` (port `1515`) or the source-IP dictionary (port `1516`), install the Elastic integration packages first:
+
+```sh
+task install-integrations
+```
+
 Endpoints:
 - Elasticsearch: `http://localhost:9200`
 - Kibana: `http://localhost:5601`
@@ -53,46 +59,86 @@ The stack exposes three syslog inputs:
 
 ```mermaid
 flowchart LR
-    Source[Syslog sources]
-    In1514["Port 1514<br/>syslog input"]
-    In1515["Port 1515<br/>raw tcp input"]
-    In1516["Port 1516<br/>raw tcp input"]
-    ES[(Elasticsearch)]
+    subgraph Sources
+        logsim[log-simulators]
+    end
 
-    Source --> In1514
-    Source --> In1515
-    Source --> In1516
-    In1514 --> ES
-    In1515 --> ES
-    In1516 --> ES
+    subgraph Logstash
+        in1514["Port 1514<br/>syslog input"]
+        in1515["Port 1515<br/>raw tcp input"]
+        in1516["Port 1516<br/>raw tcp input"]
+        filter1515["Set data_stream to<br/>syslog_router.log"]
+        filter1516["Translate source IP<br/>to data_stream.dataset"]
+    end
+
+    subgraph Elasticsearch
+        dsGeneric["logs-generic-default"]
+        dsRouter["logs-syslog_router.log-default"]
+        dsASA["logs-cisco_asa.log-default"]
+        dsFTD["logs-cisco_ftd.log-default"]
+        dsIOS["logs-cisco_ios.log-default"]
+    end
+
+    logsim --> in1514
+    logsim --> in1515
+    logsim --> in1516
+
+    in1514 -->|"data_stream: logs-generic-default"| dsGeneric
+    in1515 --> filter1515 --> dsRouter
+    dsRouter -->|"logs-syslog_router.log@custom<br/>sets _conf.dataset"| dsASA
+    dsRouter -->|"logs-syslog_router.log@custom<br/>sets _conf.dataset"| dsFTD
+    dsRouter -->|"logs-syslog_router.log@custom<br/>sets _conf.dataset"| dsIOS
+    dsRouter -->|"no match"| dsRouter
+    in1516 --> filter1516 --> dsASA
+    filter1516 --> dsFTD
+    filter1516 --> dsIOS
+    filter1516 -->|"no match"| dsGeneric
 ```
 
 ### Port 1514 — plain syslog
 
 ```mermaid
 flowchart LR
-    A["Port 1514<br/>syslog input"] -->|"data_stream: logs-generic-default"| B["logs-generic-default"]
+    A[logsim-syslog] -->|"RFC 3164 / 5424 syslog"| B["Port 1514<br/>syslog input"]
+    B -->|"Logstash output<br/>data_stream: logs-generic-default"| C["logs-generic-default"]
+    C --> D["Backing index<br/>.ds-logs-generic-default-*"]
 ```
 
 ### Port 1515 — syslog_router content-based routing
 
 ```mermaid
 flowchart LR
-    A["Port 1515<br/>raw tcp input<br/>syslog_router=true"] -->|"data_stream.dataset: syslog_router.log"| B["logs-syslog_router.log-default"]
-    B -->|"_conf.dataset: cisco_asa.log"| C["logs-cisco_asa.log-default"]
-    B -->|"_conf.dataset: cisco_ftd.log"| D["logs-cisco_ftd.log-default"]
-    B -->|"_conf.dataset: cisco_ios.log"| E["logs-cisco_ios.log-default"]
-    B -->|"no match"| F["logs-syslog_router.log-default<br/>(catch-all)"]
+    A[logsim-asa / logsim-ftd] -->|"raw TCP"| B["Port 1515<br/>tcp input"]
+    B -->|"20-filter.conf<br/>data_stream.dataset: syslog_router.log"| C["logs-syslog_router.log-default"]
+    C -->|"logs-syslog_router.log@custom<br/>ingest pipeline sets _conf.dataset"| D{"syslog_router reroute"}
+    D -->|"_conf.dataset: cisco_asa.log"| E["logs-cisco_asa.log-default"]
+    D -->|"_conf.dataset: cisco_ftd.log"| F["logs-cisco_ftd.log-default"]
+    D -->|"_conf.dataset: cisco_ios.log"| G["logs-cisco_ios.log-default"]
+    D -->|"no match"| C
+    E --> H["Backing index<br/>.ds-logs-cisco_asa.log-default-*"]
+    F --> I["Backing index<br/>.ds-logs-cisco_ftd.log-default-*"]
+    G --> J["Backing index<br/>.ds-logs-cisco_ios.log-default-*"]
 ```
 
 ### Port 1516 — source-IP dictionary routing
 
 ```mermaid
 flowchart LR
-    A["Port 1516<br/>raw tcp input<br/>syslog_dict=true"] -->|"translate source IP"| B{"Dictionary lookup"}
-    B -->|"matched"| C["logs-<integration>.log-default"]
-    B -->|"unmatched"| D["logs-generic-default"]
+    A[logsim-asa-dict<br/>172.28.0.11] -->|"raw TCP"| B["Port 1516<br/>tcp input"]
+    C[logsim-ftd-dict<br/>172.28.0.12] -->|"raw TCP"| B
+    D[logsim-ics-dict<br/>172.28.0.13] -->|"raw TCP"| B
+    B -->|"20-filter.conf<br/>translate source IP"| E{"Dictionary lookup"}
+    E -->|"172.28.0.11 -> cisco_asa.log"| F["logs-cisco_asa.log-default"]
+    E -->|"172.28.0.12 -> cisco_ftd.log"| G["logs-cisco_ftd.log-default"]
+    E -->|"172.28.0.13 -> cisco_ios.log"| H["logs-cisco_ios.log-default"]
+    E -->|"no match"| I["logs-generic-default"]
+    F --> J["Backing index<br/>.ds-logs-cisco_asa.log-default-*"]
+    G --> K["Backing index<br/>.ds-logs-cisco_ftd.log-default-*"]
+    H --> L["Backing index<br/>.ds-logs-cisco_ios.log-default-*"]
+    I --> M["Backing index<br/>.ds-logs-generic-default-*"]
 ```
+
+A data stream in Elasticsearch is a logical collection of backing indices. Each integration data stream is associated with an index template and one or more ingest pipelines; the `@custom` pipeline runs before the integration's default package pipeline and is the extension point used here to classify and reroute events.
 
 Tail the logs:
 
@@ -139,6 +185,34 @@ LOGSIM_DURATION=10s task logsim-ics-dict  # source 172.28.0.13 -> cisco_ios.log
 ```
 
 These tasks start the stack and wait for Elasticsearch and Logstash to be ready before streaming. The default rate is 10 events/sec and the default duration is 30s.
+
+### Running simulators concurrently and continuously
+
+Start the environment once, then run as many simulators as you want in separate terminal windows. Each task will stream until its duration expires, so the simulators run concurrently:
+
+```sh
+# terminal 1 - start the stack
+mise install
+task setup   # creates .env; set secure passwords before the next step
+task install-integrations
+task start
+task wait
+
+# terminal 2 - plain syslog
+LOGSIM_DURATION=5m task logsim-syslog
+
+# terminal 3 - syslog_router content routing
+LOGSIM_DURATION=5m task logsim-asa
+
+# terminal 4 - dictionary source-IP routing
+LOGSIM_DURATION=5m task logsim-asa-dict
+```
+
+To run a simulator indefinitely, set a very long duration:
+
+```sh
+LOGSIM_DURATION=999h task logsim-asa
+```
 
 You can override the rate and duration:
 
