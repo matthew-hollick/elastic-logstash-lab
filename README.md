@@ -215,7 +215,11 @@ Environment variables are read from `.env` automatically by Docker Compose. They
 
 Port `1514` is used for syslog instead of the standard `514` so Logstash does not need root privileges inside the container. Point simulators at `tcp://127.0.0.1:1514`.
 
-The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://elasticsearch:9200`. Events received on port `1515` are tagged for the `syslog_router` data stream; the `logs-syslog_router.log@custom` ingest pipeline inspects the message content and sets `_conf.dataset` so the syslog_router integration reroutes Cisco ASA/FTD/IOS events to the correct data stream. Events that do not match any pattern remain in the `logs-syslog_router.log-default` catch-all data stream. Events received on port `1516` are routed by source IP using `config/ip_to_integration.csv`; matched events are written to the corresponding integration data stream and unmatched events fall through to `logs-generic-default`. Configure filters and outputs as needed after the connection is working.
+The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://elasticsearch:9200`. Events received on port `1515` are tagged for the `syslog_router` data stream; the `logs-syslog_router.log@custom` ingest pipeline inspects the message content and sets `_conf.dataset` so the syslog_router integration reroutes Cisco ASA/FTD/IOS events to the correct data stream. Events that do not match any pattern remain in the `logs-syslog_router.log-default` catch-all data stream.
+
+Events received on port `1516` are routed by the sender's source IP using `config/ip_to_integration.csv`. The Logstash `tcp` input stores the source address in `[@metadata][input][tcp][source][ip]` when ECS compatibility is enabled, and the `translate` filter looks it up. Matched events are written to the corresponding integration data stream and unmatched events fall through to `logs-generic-default`.
+
+> **Note:** When Logstash is running inside Docker with published ports, Docker rewrites the source IP of incoming connections to the gateway address of the Docker network (e.g. `172.18.0.1`). Because of this, binding `logsim` to `127.0.1.x` on the host still appears as the Docker gateway IP to Logstash. To exercise multiple source-IP routes in this setup, run the simulators from containers attached to the same Docker network as Logstash, or use host networking for the Logstash container.
 
 ## Security notes
 
