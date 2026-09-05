@@ -5,6 +5,7 @@ vars:
   PIPELINE_DIR: '{{default "./pipeline" .PIPELINE_DIR}}'
   LOGSTASH_SYSLOG_PORT: '{{default "1514" .LOGSTASH_SYSLOG_PORT}}'
   LOGSTASH_SYSLOG_ROUTER_PORT: '{{default "1515" .LOGSTASH_SYSLOG_ROUTER_PORT}}'
+  LOGSTASH_SYSLOG_DICT_PORT: '{{default "1516" .LOGSTASH_SYSLOG_DICT_PORT}}'
   LOGSIM_RATE: '{{default "10" .LOGSIM_RATE}}'
   LOGSIM_DURATION: '{{default "30s" .LOGSIM_DURATION}}'
   LOGSIM: '{{default "git+https://github.com/matthew-hollick/log-simulators" .LOGSIM}}'
@@ -109,6 +110,59 @@ tasks:
       - task start
       - task wait
       - uvx --from '{{.LOGSIM}}' logsim-syslog --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
+
+  build-logsim-runner:
+    desc: Build the Docker image used to run simulators inside the logsim network
+    cmds:
+      - |
+        docker build \
+          -f config/logsim-runner.Dockerfile \
+          -t logstash-logsim-runner \
+          config
+    status:
+      - docker image inspect logstash-logsim-runner >/dev/null 2>&1
+
+  logsim-asa-dict:
+    desc: Stream Cisco ASA syslog into the dictionary-routed port from a fixed Docker IP
+    deps: [build-logsim-runner]
+    cmds:
+      - task start
+      - task wait
+      - |
+        docker run --rm --network logsim --ip 172.28.0.11 \
+          logstash-logsim-runner \
+          uvx --from '{{.LOGSIM}}' logsim-asa \
+            --syslog-header --tz {{.SYSLOG_TIMEZONE}} \
+            --output tcp://logstash:{{.LOGSTASH_SYSLOG_DICT_PORT}} \
+            --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
+
+  logsim-ftd-dict:
+    desc: Stream Cisco FTD syslog into the dictionary-routed port from a fixed Docker IP
+    deps: [build-logsim-runner]
+    cmds:
+      - task start
+      - task wait
+      - |
+        docker run --rm --network logsim --ip 172.28.0.12 \
+          logstash-logsim-runner \
+          uvx --from '{{.LOGSIM}}' logsim-ftd \
+            --syslog-header --tz {{.SYSLOG_TIMEZONE}} \
+            --output tcp://logstash:{{.LOGSTASH_SYSLOG_DICT_PORT}} \
+            --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
+
+  logsim-ics-dict:
+    desc: Stream Cisco IOS-style syslog into the dictionary-routed port from a fixed Docker IP
+    deps: [build-logsim-runner]
+    cmds:
+      - task start
+      - task wait
+      - |
+        docker run --rm --network logsim --ip 172.28.0.13 \
+          logstash-logsim-runner \
+          uvx --from '{{.LOGSIM}}' logsim-ics \
+            --rfc 3164 --tz {{.SYSLOG_TIMEZONE}} \
+            --output tcp://logstash:{{.LOGSTASH_SYSLOG_DICT_PORT}} \
+            --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
 
   install-integrations:
     desc: Install Elastic integration packages and routing pipeline

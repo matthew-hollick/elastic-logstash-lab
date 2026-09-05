@@ -130,6 +130,14 @@ LOGSIM_DURATION=10s task logsim-ftd      # Cisco FTD security syslog
 LOGSIM_DURATION=10s task logsim-syslog   # Linux syslog
 ```
 
+To exercise the source-IP dictionary route on port `1516`, run the simulators in ephemeral Docker containers attached to the dedicated `logsim` network. Each container is assigned a fixed IP that maps to a different integration in `config/ip_to_integration.csv`:
+
+```sh
+LOGSIM_DURATION=10s task logsim-asa-dict  # source 172.28.0.11 -> cisco_asa.log
+LOGSIM_DURATION=10s task logsim-ftd-dict  # source 172.28.0.12 -> cisco_ftd.log
+LOGSIM_DURATION=10s task logsim-ics-dict  # source 172.28.0.13 -> cisco_ios.log
+```
+
 These tasks start the stack and wait for Elasticsearch and Logstash to be ready before streaming. The default rate is 10 events/sec and the default duration is 30s.
 
 You can override the rate and duration:
@@ -185,6 +193,9 @@ task validate
 | `task logsim-asa` | Stream Cisco ASA syslog into Logstash |
 | `task logsim-ftd` | Stream Cisco FTD syslog into Logstash |
 | `task logsim-syslog` | Stream Linux syslog into Logstash |
+| `task logsim-asa-dict` | Stream Cisco ASA syslog into the dictionary-routed port from a fixed Docker IP |
+| `task logsim-ftd-dict` | Stream Cisco FTD syslog into the dictionary-routed port from a fixed Docker IP |
+| `task logsim-ics-dict` | Stream Cisco IOS syslog into the dictionary-routed port from a fixed Docker IP |
 | `task install-integrations` | Install Elastic integration packages and the syslog_router routing pipeline |
 | `task exec` | Open an interactive shell inside the running Logstash container |
 | `task clean` | Remove containers, networks, and volumes |
@@ -219,7 +230,7 @@ The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://
 
 Events received on port `1516` are routed by the sender's source IP using `config/ip_to_integration.csv`. The Logstash `tcp` input stores the source address in `[@metadata][input][tcp][source][ip]` when ECS compatibility is enabled, and the `translate` filter looks it up. Matched events are written to the corresponding integration data stream and unmatched events fall through to `logs-generic-default`.
 
-> **Note:** When Logstash is running inside Docker with published ports, Docker rewrites the source IP of incoming connections to the gateway address of the Docker network (e.g. `172.18.0.1`). Because of this, binding `logsim` to `127.0.1.x` on the host still appears as the Docker gateway IP to Logstash. To exercise multiple source-IP routes in this setup, run the simulators from containers attached to the same Docker network as Logstash, or use host networking for the Logstash container.
+> **Note:** When Logstash is running inside Docker with published ports, Docker rewrites the source IP of incoming connections to the gateway address of the Docker network. The `logsim-*-dict` tasks avoid this by running simulators in ephemeral containers attached to the dedicated `logsim` Docker network, each with a fixed IP that the dictionary recognises.
 
 ## Security notes
 
