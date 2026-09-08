@@ -1,14 +1,15 @@
-# Standalone Logstash + Elasticsearch + Kibana
+# Standalone Logstash + Elasticsearch + Kibana for testing syslog routing
 
 Run a minimal Elastic stack locally in Docker: Elasticsearch, Logstash and Kibana, with Logstash configured to send syslog input to Elasticsearch.
 
-This project demonstrates **three different approaches to ingesting flavoured syslog data**, each exposed on its own TCP input:
+This project demonstrates **four different approaches to ingesting flavoured syslog data**, each exposed on its own TCP input:
 
 1. **Plain syslog ingestion** — port `1514`. A standard `syslog` input that writes all events to the generic `logs-generic-default` data stream without identifying the source type.
 2. **Content-based routing with `syslog_router`** — port `1515`. A raw `tcp` input that forwards events to the `syslog_router` integration data stream. An Elasticsearch ingest pipeline inspects the message contents (for patterns such as `%ASA-`, `%FTD-` or Cisco IOS identifiers) and reroutes matching events to the appropriate Cisco integration data stream.
 3. **Source-IP dictionary routing** — port `1516`. A raw `tcp` input that uses a Logstash `translate` filter to look up the sender's IP address in `config/ip_to_integration.csv`. The lookup result sets the target integration data stream; unmatched events fall back to `logs-generic-default`.
+4. **Raw syslog passthrough** — port `1517`. A raw `tcp` input that writes the complete, unmodified syslog line to the `logs-mysyslog` index as the `message` field. No parsing or routing is applied.
 
-The two more sophisticated approaches (ports `1515` and `1516`) both **identify the data type** from the incoming event — either from message content or from source address — and **route the event to the matching Elastic integration data stream** so it is parsed and indexed with the correct schema.
+The more sophisticated approaches (ports `1515` and `1516`) **identify the data type** from the incoming event — either from message content or from source address — and **route the event to the matching Elastic integration data stream** so it is parsed and indexed with the correct schema.
 
 This is a local-development setup only, based on Elastic's [`start-local`](https://www.elastic.co/docs/deploy-manage/deploy/self-managed/local-development-installation-quickstart) quickstart.
 
@@ -49,11 +50,12 @@ Endpoints:
 - Kibana: `http://localhost:5601`
 - Logstash monitoring API: `http://localhost:9600`
 
-The stack exposes three syslog inputs:
+The stack exposes four syslog inputs:
 
 - Port `1514` — `syslog` input for plain syslog (written to `logs-generic-default`).
 - Port `1515` — raw `tcp` input tagged for the `syslog_router` integration; the Elasticsearch `logs-syslog_router.log@custom` ingest pipeline routes Cisco ASA/FTD/IOS events to the correct integration data stream.
 - Port `1516` — raw `tcp` input for source-IP-based routing using the dictionary file `config/ip_to_integration.csv`. Matched events are written to the corresponding integration data stream; unmatched events fall back to `logs-generic-default`.
+- Port `1517` — raw `tcp` passthrough input. The complete syslog line is stored unchanged in the `message` field and written to the `logs-mysyslog` index.
 
 ## Data flows
 
@@ -67,6 +69,7 @@ flowchart LR
         in1514["Port 1514<br/>syslog input"]
         in1515["Port 1515<br/>raw tcp input"]
         in1516["Port 1516<br/>raw tcp input"]
+        in1517["Port 1517<br/>raw tcp passthrough"]
         filter1515["Set data_stream to<br/>syslog_router.log"]
         filter1516["Translate source IP<br/>to data_stream.dataset"]
     end
@@ -77,11 +80,13 @@ flowchart LR
         dsASA["logs-cisco_asa.log-default"]
         dsFTD["logs-cisco_ftd.log-default"]
         dsIOS["logs-cisco_ios.log-default"]
+        dsMySyslog["logs-mysyslog"]
     end
 
     logsim --> in1514
     logsim --> in1515
     logsim --> in1516
+    logsim --> in1517
 
     in1514 -->|"data_stream: logs-generic-default"| dsGeneric
     in1515 --> filter1515 --> dsRouter
@@ -93,6 +98,7 @@ flowchart LR
     filter1516 --> dsFTD
     filter1516 --> dsIOS
     filter1516 -->|"no match"| dsGeneric
+    in1517 -->|"index: logs-mysyslog"| dsMySyslog
 ```
 
 ### Port 1514 — plain syslog
@@ -138,6 +144,14 @@ flowchart LR
     I --> M["Backing index<br/>.ds-logs-generic-default-*"]
 ```
 
+### Port 1517 — raw syslog passthrough
+
+```mermaid
+flowchart LR
+    A[logsim / bash] -->|"raw TCP"| B["Port 1517<br/>tcp input"]
+    B -->|"no parsing<br/>index: logs-mysyslog"| C["logs-mysyslog"]
+```
+
 A data stream in Elasticsearch is a logical collection of backing indices. Each integration data stream is associated with an index template and one or more ingest pipelines; the `@custom` pipeline runs before the integration's default package pipeline and is the extension point used here to classify and reroute events.
 
 Tail the logs:
@@ -164,6 +178,18 @@ Run a smoke test that starts the stack, sends a test syslog event, and stops:
 
 ```sh
 task smoke
+```
+
+Send a test line to the raw passthrough port `1517`:
+
+```sh
+task send-mysyslog
+```
+
+Run a full smoke test for port `1517` that sends an event and queries the `logs-mysyslog` index:
+
+```sh
+task smoke-mysyslog
 ```
 
 ## Stream log simulator data
@@ -234,9 +260,9 @@ This installs the `tcp`, `syslog_router`, `cisco_asa`, `cisco_ios`, and `cisco_f
 
 Edit or add `.conf` files under `pipeline/`. Logstash checks for pipeline changes every three seconds and reloads them automatically. All files in the directory are combined into the main pipeline in lexical order:
 
-- `01-input.conf` — syslog input on port `1514` and raw TCP inputs on ports `1515` and `1516`
+- `01-input.conf` — syslog input on port `1514` and raw TCP inputs on ports `1515`, `1516`, and `1517`
 - `20-filter.conf` — adds `syslog_router` data_stream fields and performs source-IP dictionary lookup for port `1516` events
-- `99-output.conf` — Elasticsearch output
+- `99-output.conf` — Elasticsearch output; events from port `1517` are written to the `logs-mysyslog` index
 
 To load pipeline files from another directory, set `PIPELINE_DIR` to an absolute path:
 
@@ -264,6 +290,9 @@ task validate
 | `task send` | Send a test syslog line to the TCP input |
 | `task validate` | Validate pipeline configuration without starting the stack |
 | `task smoke` | Start, send a test syslog event, stop |
+| `task send-mysyslog` | Send a test syslog line to the passthrough port `1517` |
+| `task check-mysyslog` | Query Elasticsearch for recent documents in `logs-mysyslog` |
+| `task smoke-mysyslog` | Start, send a passthrough event, query the index, stop |
 | `task logsim-asa` | Stream Cisco ASA syslog into Logstash |
 | `task logsim-ftd` | Stream Cisco FTD syslog into Logstash |
 | `task logsim-syslog` | Stream Linux syslog into Logstash |
@@ -292,6 +321,7 @@ Environment variables are read from `.env` automatically by Docker Compose. They
 | `LOGSTASH_SYSLOG_PORT` | `1514` | Host port for the plain syslog TCP input |
 | `LOGSTASH_SYSLOG_ROUTER_PORT` | `1515` | Host port for the syslog-router tagged TCP input |
 | `LOGSTASH_SYSLOG_DICT_PORT` | `1516` | Host port for the source-IP dictionary-routed TCP input |
+| `LOGSTASH_MYSYSLOG_PORT` | `1517` | Host port for the raw syslog passthrough TCP input |
 | `LOGSTASH_API_PORT` | `9600` | Host port for the Logstash monitoring API |
 | `PIPELINE_DIR` | `./pipeline` | Host directory containing pipeline `.conf` files |
 | `LOGSIM` | `git+https://github.com/matthew-hollick/log-simulators` | Git URL for log-simulators |
@@ -303,6 +333,8 @@ Port `1514` is used for syslog instead of the standard `514` so Logstash does no
 The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://elasticsearch:9200`. Events received on port `1515` are tagged for the `syslog_router` data stream; the `logs-syslog_router.log@custom` ingest pipeline inspects the message content and sets `_conf.dataset` so the syslog_router integration reroutes Cisco ASA/FTD/IOS events to the correct data stream. Events that do not match any pattern remain in the `logs-syslog_router.log-default` catch-all data stream.
 
 Events received on port `1516` are routed by the sender's source IP using `config/ip_to_integration.csv`. The Logstash `tcp` input stores the source address in `[@metadata][input][tcp][source][ip]` when ECS compatibility is enabled, and the `translate` filter looks it up. Matched events are written to the corresponding integration data stream and unmatched events fall through to `logs-generic-default`.
+
+Events received on port `1517` are written directly to the `logs-mysyslog` index without parsing or routing. The complete syslog line is preserved in the `message` field.
 
 > **Note:** When Logstash is running inside Docker with published ports, Docker rewrites the source IP of incoming connections to the gateway address of the Docker network. The `logsim-*-dict` tasks avoid this by running simulators in ephemeral containers attached to the dedicated `logsim` Docker network, each with a fixed IP that the dictionary recognises.
 

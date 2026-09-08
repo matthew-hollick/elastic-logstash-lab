@@ -6,8 +6,9 @@ vars:
   LOGSTASH_SYSLOG_PORT: '{{default "1514" .LOGSTASH_SYSLOG_PORT}}'
   LOGSTASH_SYSLOG_ROUTER_PORT: '{{default "1515" .LOGSTASH_SYSLOG_ROUTER_PORT}}'
   LOGSTASH_SYSLOG_DICT_PORT: '{{default "1516" .LOGSTASH_SYSLOG_DICT_PORT}}'
-  LOGSIM_RATE: '{{default "10" .LOGSIM_RATE}}'
-  LOGSIM_DURATION: '{{default "30s" .LOGSIM_DURATION}}'
+  LOGSTASH_MYSYSLOG_PORT: '{{default "1517" .LOGSTASH_MYSYSLOG_PORT}}'
+  LOGSIM_RATE: '{{default "50" .LOGSIM_RATE}}'
+  LOGSIM_DURATION: '{{default "1h" .LOGSIM_DURATION}}'
   LOGSIM: '{{default "git+https://github.com/matthew-hollick/log-simulators" .LOGSIM}}'
   SYSLOG_TIMEZONE:
     sh: 'grep -s "^SYSLOG_TIMEZONE=" .env 2>/dev/null | cut -d= -f2- | tr -d "\n" || echo UTC'
@@ -79,6 +80,31 @@ tasks:
     cmds:
       - |
         bash -c 'printf "<14>%s %s: %s\n" "$(TZ="{{.SYSLOG_TIMEZONE}}" date "+%b %e %H:%M:%S")" "logstash-test" "hello from task send" > /dev/tcp/localhost/{{.LOGSTASH_SYSLOG_PORT}}'
+
+  send-mysyslog:
+    desc: Send a test syslog line to the mysyslog passthrough port
+    cmds:
+      - |
+        bash -c 'printf "<14>%s %s: %s\n" "$(TZ="{{.SYSLOG_TIMEZONE}}" date "+%b %e %H:%M:%S")" "logstash-test" "hello from mysyslog" > /dev/tcp/localhost/{{.LOGSTASH_MYSYSLOG_PORT}}'
+
+  check-mysyslog:
+    desc: Query Elasticsearch for recent documents in logs-mysyslog
+    cmds:
+      - |
+        ELASTIC_PASSWORD=$(grep '^ELASTIC_PASSWORD=' .env | cut -d= -f2-)
+        ES_PORT=$(grep '^ES_PORT=' .env | cut -d= -f2-)
+        curl --noproxy "*" -s -u "elastic:${ELASTIC_PASSWORD}" "http://127.0.0.1:${ES_PORT:-9200}/logs-mysyslog/_search?size=5&sort=@timestamp:desc&pretty"
+
+  smoke-mysyslog:
+    desc: Start Logstash, send a mysyslog event, query the index, print logs, then stop
+    cmds:
+      - task start
+      - task wait
+      - task send-mysyslog
+      - sleep 5
+      - task check-mysyslog
+      - '{{.COMPOSE}} logs --tail=20 logstash'
+      - task stop
 
   smoke:
     desc: Start Logstash, send a test syslog event, print the resulting logs, then stop

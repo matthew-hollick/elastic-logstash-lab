@@ -171,6 +171,7 @@ services:
       - "127.0.0.1:${LOGSTASH_SYSLOG_PORT:-1514}:1514"
       - "127.0.0.1:${LOGSTASH_SYSLOG_ROUTER_PORT:-1515}:1515"
       - "127.0.0.1:${LOGSTASH_SYSLOG_DICT_PORT:-1516}:1516"
+      - "127.0.0.1:${LOGSTASH_MYSYSLOG_PORT:-1517}:1517"
       - "127.0.0.1:${LOGSTASH_API_PORT:-9600}:9600"
     volumes:
       - ${PIPELINE_DIR:-./pipeline}:/usr/share/logstash/pipeline:ro
