@@ -54,7 +54,7 @@ tasks:
   status:
     desc: Show running container status
     cmds:
-      - '{{.COMPOSE}} ps'
+      - '{{.COMPOSE}} ps --format "{{ "{{.Service}}" }}: {{ "{{.Status}}" }}"'
 
   validate:
     desc: Validate pipeline configuration without starting the service
