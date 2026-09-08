@@ -197,9 +197,10 @@ task smoke-mysyslog
 The [log-simulators](https://github.com/matthew-hollick/log-simulators) repo can stream realistic syslog into Logstash on TCP port `1514` (plain syslog) or `1515` (syslog-router tagged events for integration routing).
 
 ```sh
-LOGSIM_DURATION=10s task logsim-asa      # Cisco ASA firewall syslog
-LOGSIM_DURATION=10s task logsim-ftd      # Cisco FTD security syslog
-LOGSIM_DURATION=10s task logsim-syslog   # Linux syslog
+LOGSIM_DURATION=10s task logsim-asa       # Cisco ASA firewall syslog
+LOGSIM_DURATION=10s task logsim-ftd       # Cisco FTD security syslog
+LOGSIM_DURATION=10s task logsim-syslog    # Linux syslog
+LOGSIM_DURATION=10s task logsim-mysyslog  # Linux syslog to logs-mysyslog
 ```
 
 To exercise the source-IP dictionary route on port `1516`, run the simulators in ephemeral Docker containers attached to the dedicated `logsim` network. Each container is assigned a fixed IP that maps to a different integration in `config/ip_to_integration.csv`:
@@ -296,6 +297,7 @@ task validate
 | `task logsim-asa` | Stream Cisco ASA syslog into Logstash |
 | `task logsim-ftd` | Stream Cisco FTD syslog into Logstash |
 | `task logsim-syslog` | Stream Linux syslog into Logstash |
+| `task logsim-mysyslog` | Stream Linux syslog into the port-1517 passthrough index `logs-mysyslog` |
 | `task logsim-asa-dict` | Stream Cisco ASA syslog into the dictionary-routed port from a fixed Docker IP |
 | `task logsim-ftd-dict` | Stream Cisco FTD syslog into the dictionary-routed port from a fixed Docker IP |
 | `task logsim-ics-dict` | Stream Cisco IOS syslog into the dictionary-routed port from a fixed Docker IP |

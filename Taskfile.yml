@@ -137,6 +137,13 @@ tasks:
       - task wait
       - uvx --from '{{.LOGSIM}}' logsim-syslog --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_SYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
 
+  logsim-mysyslog:
+    desc: Stream Linux syslog into the raw passthrough port for logs-mysyslog
+    cmds:
+      - task start
+      - task wait
+      - uvx --from '{{.LOGSIM}}' logsim-syslog --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_MYSYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
+
   build-logsim-runner:
     desc: Build the Docker image used to run simulators inside the logsim network
     cmds:
