@@ -176,7 +176,7 @@ services:
     volumes:
       - ${PIPELINE_DIR:-./pipeline}:/usr/share/logstash/pipeline:ro
       - ./config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
-      - ./config/ip_to_integration.csv:/usr/share/logstash/config/ip_to_integration.csv:ro
+      - ./config/syslog-sources.csv:/usr/share/logstash/config/syslog-sources.csv:ro
       - logstash-data:/usr/share/logstash/data
     networks:
       - default

@@ -6,7 +6,7 @@ This project demonstrates **four different approaches to ingesting flavoured sys
 
 1. **Plain syslog ingestion** — port `1514`. A standard `syslog` input that writes all events to the generic `logs-generic-default` data stream without identifying the source type.
 2. **Content-based routing with `syslog_router`** — port `1515`. A raw `tcp` input that forwards events to the `syslog_router` integration data stream. An Elasticsearch ingest pipeline inspects the message contents (for patterns such as `%ASA-`, `%FTD-` or Cisco IOS identifiers) and reroutes matching events to the appropriate Cisco integration data stream.
-3. **Source-IP dictionary routing** — port `1516`. A raw `tcp` input that uses a Logstash `translate` filter to look up the sender's IP address in `config/ip_to_integration.csv`. The lookup result sets the target integration data stream; unmatched events fall back to `logs-generic-default`.
+3. **Source-IP dictionary routing** — port `1516`. A raw `tcp` input that uses a Logstash `translate` filter to look up the sender's IP address in `config/syslog-sources.csv`. The lookup result sets the target integration data stream; unmatched events fall back to `logs-generic-default`.
 4. **Raw syslog passthrough** — port `1517`. A raw `tcp` input that writes the complete, unmodified syslog line to the `logs-mysyslog` index as the `message` field. No parsing or routing is applied.
 
 The more sophisticated approaches (ports `1515` and `1516`) **identify the data type** from the incoming event — either from message content or from source address — and **route the event to the matching Elastic integration data stream** so it is parsed and indexed with the correct schema.
@@ -54,7 +54,7 @@ The stack exposes four syslog inputs:
 
 - Port `1514` — `syslog` input for plain syslog (written to `logs-generic-default`).
 - Port `1515` — raw `tcp` input tagged for the `syslog_router` integration; the Elasticsearch `logs-syslog_router.log@custom` ingest pipeline routes Cisco ASA/FTD/IOS events to the correct integration data stream.
-- Port `1516` — raw `tcp` input for source-IP-based routing using the dictionary file `config/ip_to_integration.csv`. Matched events are written to the corresponding integration data stream; unmatched events fall back to `logs-generic-default`.
+- Port `1516` — raw `tcp` input for source-IP-based routing using the dictionary file `config/syslog-sources.csv`. Matched events are written to the corresponding integration data stream; unmatched events fall back to `logs-generic-default`.
 - Port `1517` — raw `tcp` passthrough input. The complete syslog line is stored unchanged in the `message` field and written to the `logs-mysyslog` index.
 
 ## Data flows
@@ -203,7 +203,7 @@ LOGSIM_DURATION=10s task logsim-syslog    # Linux syslog
 LOGSIM_DURATION=10s task logsim-mysyslog  # Linux syslog to logs-mysyslog
 ```
 
-To exercise the source-IP dictionary route on port `1516`, run the simulators in ephemeral Docker containers attached to the dedicated `logsim` network. Each container is assigned a fixed IP that maps to a different integration in `config/ip_to_integration.csv`:
+To exercise the source-IP dictionary route on port `1516`, run the simulators in ephemeral Docker containers attached to the dedicated `logsim` network. Each container is assigned a fixed IP that maps to a different integration in `config/syslog-sources.csv`:
 
 ```sh
 LOGSIM_DURATION=10s task logsim-asa-dict  # source 172.28.0.11 -> cisco_asa.log
@@ -334,7 +334,7 @@ Port `1514` is used for syslog instead of the standard `514` so Logstash does no
 
 The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://elasticsearch:9200`. Events received on port `1515` are tagged for the `syslog_router` data stream; the `logs-syslog_router.log@custom` ingest pipeline inspects the message content and sets `_conf.dataset` so the syslog_router integration reroutes Cisco ASA/FTD/IOS events to the correct data stream. Events that do not match any pattern remain in the `logs-syslog_router.log-default` catch-all data stream.
 
-Events received on port `1516` are routed by the sender's source IP using `config/ip_to_integration.csv`. The Logstash `tcp` input stores the source address in `[@metadata][input][tcp][source][ip]` when ECS compatibility is enabled, and the `translate` filter looks it up. Matched events are written to the corresponding integration data stream and unmatched events fall through to `logs-generic-default`.
+Events received on port `1516` are routed by the sender's source IP using `config/syslog-sources.csv`. The Logstash `tcp` input stores the source address in `[@metadata][input][tcp][source][ip]` when ECS compatibility is enabled, and the `translate` filter looks it up. Matched events are written to the corresponding integration data stream and unmatched events fall through to `logs-generic-default`.
 
 Events received on port `1517` are written directly to the `logs-mysyslog` index without parsing or routing. The complete syslog line is preserved in the `message` field.
 
