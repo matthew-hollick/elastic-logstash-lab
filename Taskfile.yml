@@ -144,6 +144,20 @@ tasks:
       - task wait
       - uvx --from '{{.LOGSIM}}' logsim-syslog --tz {{.SYSLOG_TIMEZONE}} --output tcp://127.0.0.1:{{.LOGSTASH_MYSYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --duration {{.LOGSIM_DURATION}}
 
+  logsim-windows:
+    desc: Continuously stream Windows AD security events into logs-mysyslog
+    cmds:
+      - task start
+      - task wait
+      - uvx --from '{{.LOGSIM}}' logsim-windows --output tcp://127.0.0.1:{{.LOGSTASH_MYSYSLOG_PORT}} --rate {{.LOGSIM_RATE}} --count 0
+
+  logsim-windows-elastic:
+    desc: Continuously stream Elastic-format Windows events into logs-system.security-default
+    cmds:
+      - task start
+      - task wait
+      - uvx --from '{{.LOGSIM}}' logsim-windows --format elastic --output tcp://127.0.0.1:{{.LOGSTASH_WINDOWS_PORT}} --rate {{.LOGSIM_RATE}} --count 0
+
   build-logsim-runner:
     desc: Build the Docker image used to run simulators inside the logsim network
     cmds:
@@ -217,7 +231,7 @@ tasks:
           fi
           sleep 2
         done
-        for pkg in "tcp:2.3.1" "syslog_router:1.0.1" "cisco_asa:2.46.0" "cisco_ios:1.36.0" "cisco_ftd:3.13.12"; do
+        for pkg in "tcp:2.3.1" "syslog_router:1.0.1" "cisco_asa:2.46.0" "cisco_ios:1.36.0" "cisco_ftd:3.13.12" "system:3.0.0"; do
           name="${pkg%%:*}"
           version="${pkg##*:}"
           echo "Installing ${name} @ ${version}"
@@ -225,6 +239,82 @@ tasks:
         done
         echo "Installing syslog_router routing pipeline"
         curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X PUT "${ES_URL}/_ingest/pipeline/logs-syslog_router.log@custom" -H "Content-Type: application/json" -d @config/syslog_router_routing_pipeline.json
+
+  install-share-workflow:
+    desc: Create the 'share' Kibana space, the windows-security-share index, and the scheduled copy workflow
+    cmds:
+      - |
+        set -e
+        ELASTIC_PASSWORD=$(grep '^ELASTIC_PASSWORD=' .env | cut -d= -f2-)
+        KIBANA_PORT=$(grep '^KIBANA_PORT=' .env | cut -d= -f2-)
+        ES_PORT=$(grep '^ES_PORT=' .env | cut -d= -f2-)
+        KIBANA_URL="http://127.0.0.1:${KIBANA_PORT:-5601}"
+        ES_URL="http://127.0.0.1:${ES_PORT:-9200}"
+        for i in $(seq 1 60); do
+          if curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" "${KIBANA_URL}/api/status" >/dev/null 2>&1; then
+            break
+          fi
+          if [ "$i" -eq 60 ]; then
+            echo "Kibana did not become ready" >&2
+            exit 1
+          fi
+          sleep 2
+        done
+        echo "Creating 'share' Kibana space"
+        curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X POST "${KIBANA_URL}/api/spaces/space" -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+          -d '{"id":"share","name":"share","description":"Shared data products derived from internal indexes","color":"#54B399","initials":"s"}' \
+          || echo "(space may already exist)"
+        echo
+        echo "Installing windows-security-share-ilm ILM policy"
+        curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X PUT "${ES_URL}/_ilm/policy/windows-security-share-ilm" -H "Content-Type: application/json" \
+          -d @config/windows-security-share-ilm.json
+        echo
+        echo "Installing share-default ingest pipeline"
+        curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X PUT "${ES_URL}/_ingest/pipeline/share-default" -H "Content-Type: application/json" \
+          -d @config/share-default.pipeline.json
+        echo
+        echo "Installing logs-system.security-share index template"
+        curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X PUT "${ES_URL}/_index_template/logs-system.security-share" -H "Content-Type: application/json" \
+          -d @config/logs-system.security-share.template.json
+        echo
+        echo "Creating logs-system.security-share data stream"
+        curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X PUT "${ES_URL}/_data_stream/logs-system.security-share" \
+          || echo "(data stream may already exist)"
+        echo
+        if curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" "${KIBANA_URL}/s/share/api/workflows" -H "kbn-xsrf: true" | grep -q '"share-windows-security-events"'; then
+          echo "Workflow share-windows-security-events already installed"
+        else
+          echo "Installing share workflow"
+          WF_YAML=$(cat config/workflows/share-windows-security.yaml | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
+          curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X POST "${KIBANA_URL}/s/share/api/workflows" -H "kbn-xsrf: true" -H "Content-Type: application/json" \
+            -d "{\"workflows\":[{\"yaml\":${WF_YAML}}]}"
+          echo
+        fi
+        echo "Run once now:"
+        curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X POST "${KIBANA_URL}/s/share/api/workflows/workflow/share-windows-security-events/run" -H "kbn-xsrf: true" -H "Content-Type: application/json" -d '{"inputs":{}}'
+
+  run-share-workflow:
+    desc: Trigger the share workflow manually
+    cmds:
+      - |
+        ELASTIC_PASSWORD=$(grep '^ELASTIC_PASSWORD=' .env | cut -d= -f2-)
+        KIBANA_PORT=$(grep '^KIBANA_PORT=' .env | cut -d= -f2-)
+        curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X POST "http://127.0.0.1:${KIBANA_PORT:-5601}/s/share/api/workflows/workflow/share-windows-security-events/run" -H "kbn-xsrf: true" -H "Content-Type: application/json" -d '{"inputs":{}}'
+
+  install-share-access:
+    desc: Create the share_viewer role and share_user account (read-only, share space + *-share indices only)
+    cmds:
+      - |
+        set -e
+        ELASTIC_PASSWORD=$(grep '^ELASTIC_PASSWORD=' .env | cut -d= -f2-)
+        ES_PORT=$(grep '^ES_PORT=' .env | cut -d= -f2-)
+        ES_URL="http://127.0.0.1:${ES_PORT:-9200}"
+        echo "Installing share_viewer role"
+        curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X PUT "${ES_URL}/_security/role/share_viewer" -H "Content-Type: application/json" -d @config/security/share_viewer.role.json
+        echo
+        echo "Installing share_user (password: changeme - demo only)"
+        curl --noproxy "*" -fs -u "elastic:${ELASTIC_PASSWORD}" -X PUT "${ES_URL}/_security/user/share_user" -H "Content-Type: application/json" -d @config/security/share_user.user.json
+        echo
 
   exec:
     desc: Open an interactive shell inside the running Logstash container

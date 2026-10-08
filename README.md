@@ -2,12 +2,13 @@
 
 Run a minimal Elastic stack locally in Docker: Elasticsearch, Logstash and Kibana, with Logstash configured to send syslog input to Elasticsearch.
 
-This project demonstrates **four different approaches to ingesting flavoured syslog data**, each exposed on its own TCP input:
+This project demonstrates **several different approaches to ingesting flavoured syslog data** (plus one pre-structured JSON route), each exposed on its own TCP input:
 
 1. **Plain syslog ingestion** — port `1514`. A standard `syslog` input that writes all events to the generic `logs-generic-default` data stream without identifying the source type.
 2. **Content-based routing with `syslog_router`** — port `1515`. A raw `tcp` input that forwards events to the `syslog_router` integration data stream. An Elasticsearch ingest pipeline inspects the message contents (for patterns such as `%ASA-`, `%FTD-` or Cisco IOS identifiers) and reroutes matching events to the appropriate Cisco integration data stream.
 3. **Source-IP dictionary routing** — port `1516`. A raw `tcp` input that uses a Logstash `translate` filter to look up the sender's IP address in `config/syslog-sources.csv`. The lookup result sets the target integration data stream; unmatched events fall back to `logs-generic-default`.
 4. **Raw syslog passthrough** — port `1517`. A raw `tcp` input that writes the complete, unmodified syslog line to the `logs-mysyslog` index as the `message` field. No parsing or routing is applied.
+5. **Pre-structured JSON routing** — port `1518`. A `tcp` input with a `json` codec that accepts Elastic Winlog-compatible Windows Security events (as emitted by `logsim-windows --format elastic`). Logstash sets the data stream fields and the event is written to `logs-system.security-default`, where the Elastic System integration's ingest pipeline performs the ECS enrichment.
 
 The more sophisticated approaches (ports `1515` and `1516`) **identify the data type** from the incoming event — either from message content or from source address — and **route the event to the matching Elastic integration data stream** so it is parsed and indexed with the correct schema.
 
@@ -50,12 +51,13 @@ Endpoints:
 - Kibana: `http://localhost:5601`
 - Logstash monitoring API: `http://localhost:9600`
 
-The stack exposes four syslog inputs:
+The stack exposes five inputs:
 
 - Port `1514` — `syslog` input for plain syslog (written to `logs-generic-default`).
 - Port `1515` — raw `tcp` input tagged for the `syslog_router` integration; the Elasticsearch `logs-syslog_router.log@custom` ingest pipeline routes Cisco ASA/FTD/IOS events to the correct integration data stream.
 - Port `1516` — raw `tcp` input for source-IP-based routing using the dictionary file `config/syslog-sources.csv`. Matched events are written to the corresponding integration data stream; unmatched events fall back to `logs-generic-default`.
 - Port `1517` — raw `tcp` passthrough input. The complete syslog line is stored unchanged in the `message` field and written to the `logs-mysyslog` index.
+- Port `1518` — `tcp` input with `json` codec for Elastic Winlog-compatible Windows Security events. Events are routed to `logs-system.security-default` and enriched by the System integration's ingest pipeline. Requires the `system` integration package (`task install-integrations`).
 
 ## Data flows
 
@@ -70,8 +72,10 @@ flowchart LR
         in1515["Port 1515<br/>raw tcp input"]
         in1516["Port 1516<br/>raw tcp input"]
         in1517["Port 1517<br/>raw tcp passthrough"]
+        in1518["Port 1518<br/>tcp input + json codec"]
         filter1515["Set data_stream to<br/>syslog_router.log"]
         filter1516["Translate source IP<br/>to data_stream.dataset"]
+        filter1518["Set data_stream to<br/>system.security"]
     end
 
     subgraph Elasticsearch
@@ -81,12 +85,14 @@ flowchart LR
         dsFTD["logs-cisco_ftd.log-default"]
         dsIOS["logs-cisco_ios.log-default"]
         dsMySyslog["logs-mysyslog"]
+        dsSysSec["logs-system.security-default"]
     end
 
     logsim --> in1514
     logsim --> in1515
     logsim --> in1516
     logsim --> in1517
+    logsim -->|"elastic format JSON"| in1518
 
     in1514 -->|"data_stream: logs-generic-default"| dsGeneric
     in1515 --> filter1515 --> dsRouter
@@ -99,6 +105,8 @@ flowchart LR
     filter1516 --> dsIOS
     filter1516 -->|"no match"| dsGeneric
     in1517 -->|"index: logs-mysyslog"| dsMySyslog
+    in1518 --> filter1518 --> dsSysSec
+    dsSysSec -->|"logs-system.security-*<br/>ingest pipeline ECS-enriches"| dsSysSec
 ```
 
 ### Port 1514 — plain syslog
@@ -152,6 +160,63 @@ flowchart LR
     B -->|"no parsing<br/>index: logs-mysyslog"| C["logs-mysyslog"]
 ```
 
+### Port 1518 — Elastic-format Windows Security events
+
+```mermaid
+flowchart LR
+    A["logsim-windows<br/>--format elastic"] -->|"JSON over TCP"| B["Port 1518<br/>tcp input + json codec"]
+    B -->|"20-filter.conf<br/>data_stream.dataset: system.security"| C["logs-system.security-default"]
+    C -->|"logs-system.security-*<br/>ingest pipeline"| D["ECS-enriched document<br/>event.action, event.category,<br/>source.*, user.*, related.*"]
+    C --> E["Backing index<br/>.ds-logs-system.security-default-*"]
+```
+
+The events arriving on port `1518` are pre-structured documents shaped like Winlogbeat/Elastic Agent `wineventlog` output (`event.code`, `winlog.event_id`, `winlog.event_data.*`, ...). Logstash only assigns the data stream; the System integration's ingest pipeline performs all ECS categorization and enrichment. Windows `Security` channel events (4624, 4625, 4672, 4688, 4720, 4740) are handled by the **System** integration, not the separate Windows integration, which targets PowerShell/Sysmon/Defender channels.
+
+### The `share` space and the Windows Security copy workflow
+
+A Kibana space named `share` contains a scheduled [Elastic Workflow](https://www.elastic.co/docs/explore-analyze/workflows) (`share-windows-security-events`) that copies Windows Security events out of the internal `logs-system.security-default` data stream into a minimal share-facing data stream, `logs-system.security-share`:
+
+```mermaid
+flowchart LR
+    A["logs-system.security-default<br/>(enriched Windows events)"] -->|"every 10m<br/>_reindex last 70 min<br/>minimal fields"| B["logs-system.security-share<br/>data stream"]
+    B -->|"share-default ingest pipeline"| C["+ shared: 'shared'"]
+    B -.->|"ILM: rollover 12h<br/>delete 12h later"| D["~1 day retention"]
+```
+
+- **Trigger:** every 10 minutes (also runnable manually via `task run-share-workflow`).
+- **Overlap:** each run reindexes events from the last 70 minutes, so the 10-minute schedule has a 60-minute lookback overlap. The original `_id` is preserved; data streams only accept `create` operations, so already-copied events surface as version conflicts and are skipped via `conflicts: proceed` — no duplicates even if events arrive late.
+- **Fields copied:** `@timestamp`, `event.code`, `event.action`, `event.outcome`, `user.name`, `source.ip`, `winlog.computer_name`. No agent/collector identity, ECS metadata, `data_stream`, or ingest metadata is copied.
+- **Index template** (`logs-system.security-share`, defined in `config/logs-system.security-share.template.json`): one primary shard, no replicas, the `share-default` default ingest pipeline, and the `windows-security-share-ilm` lifecycle policy.
+- **Ingest pipeline** (`share-default`): a single step that sets `shared: "shared"` on every document.
+- **Retention** (`windows-security-share-ilm`): rollover every 12 hours; each backing index is deleted 12 hours after rollover, so no event is kept longer than ~24 hours.
+
+#### Sharing convention and access control
+
+Kibana spaces organise saved objects but do **not** restrict data access — Elasticsearch security roles do. This project uses a naming convention to mark shareable data:
+
+> **Any index or data stream intended for sharing ends in `-share`** (e.g. `logs-system.security-share`, `metrics-foo-share`).
+
+The `share_viewer` role (`config/security/share_viewer.role.json`) grants:
+
+- `read` + `view_index_metadata` on `*-share` indices only
+- Kibana privileges: read-only Discover, Dashboard, and data views — scoped to `space:share` only
+
+The `share_user` demo account (password `changeme`) holds only this role. Installing both:
+
+```sh
+task install-share-access
+```
+
+Verified boundary for `share_user`: can read `logs-system.security-share` but gets `403` on `logs-system.security-default` and other indices; can read saved objects in the `share` space, sees zero objects in the default space, and cannot write saved objects anywhere.
+
+Install it with:
+
+```sh
+task install-share-workflow
+```
+
+This creates the `share` space, the ILM policy, ingest pipeline, index template, the `logs-system.security-share` data stream, and the workflow, then triggers one immediate run. It is safe to run repeatedly.
+
 A data stream in Elasticsearch is a logical collection of backing indices. Each integration data stream is associated with an index template and one or more ingest pipelines; the `@custom` pipeline runs before the integration's default package pipeline and is the extension point used here to classify and reroute events.
 
 Tail the logs:
@@ -201,6 +266,8 @@ LOGSIM_DURATION=10s task logsim-asa       # Cisco ASA firewall syslog
 LOGSIM_DURATION=10s task logsim-ftd       # Cisco FTD security syslog
 LOGSIM_DURATION=10s task logsim-syslog    # Linux syslog
 LOGSIM_DURATION=10s task logsim-mysyslog  # Linux syslog to logs-mysyslog
+task logsim-windows                       # Continuous Windows AD security events (XML) to logs-mysyslog
+task logsim-windows-elastic               # Continuous Windows Security events (Elastic JSON) to logs-system.security-default
 ```
 
 To exercise the source-IP dictionary route on port `1516`, run the simulators in ephemeral Docker containers attached to the dedicated `logsim` network. Each container is assigned a fixed IP that maps to a different integration in `config/syslog-sources.csv`:
@@ -255,15 +322,15 @@ Before routing events to the Cisco integration data streams, install the require
 task install-integrations
 ```
 
-This installs the `tcp`, `syslog_router`, `cisco_asa`, `cisco_ios`, and `cisco_ftd` integration packages, and also installs the `logs-syslog_router.log@custom` ingest pipeline that performs the Cisco syslog routing in Elasticsearch.
+This installs the `tcp`, `syslog_router`, `cisco_asa`, `cisco_ios`, `cisco_ftd`, and `system` integration packages, and also installs the `logs-syslog_router.log@custom` ingest pipeline that performs the Cisco syslog routing in Elasticsearch. The `system` package provides the `logs-system.security-*` ingest pipelines used by the port-`1518` Windows Security route.
 
 ## Use a custom pipeline
 
 Edit or add `.conf` files under `pipeline/`. Logstash checks for pipeline changes every three seconds and reloads them automatically. All files in the directory are combined into the main pipeline in lexical order:
 
-- `01-input.conf` — syslog input on port `1514` and raw TCP inputs on ports `1515`, `1516`, and `1517`
-- `20-filter.conf` — adds `syslog_router` data_stream fields and performs source-IP dictionary lookup for port `1516` events
-- `99-output.conf` — Elasticsearch output; events from port `1517` are written to the `logs-mysyslog` index
+- `01-input.conf` — syslog input on port `1514`, raw TCP inputs on ports `1515`, `1516`, and `1517`, and a JSON-codec TCP input on port `1518`
+- `20-filter.conf` — adds `syslog_router` data_stream fields, performs source-IP dictionary lookup for port `1516` events, and sets the `system.security` data stream for port `1518` events
+- `99-output.conf` — Elasticsearch output; events from port `1517` are written to the `logs-mysyslog` index, all others go to their `data_stream.*` destination
 
 To load pipeline files from another directory, set `PIPELINE_DIR` to an absolute path:
 
@@ -298,10 +365,15 @@ task validate
 | `task logsim-ftd` | Stream Cisco FTD syslog into Logstash |
 | `task logsim-syslog` | Stream Linux syslog into Logstash |
 | `task logsim-mysyslog` | Stream Linux syslog into the port-1517 passthrough index `logs-mysyslog` |
+| `task logsim-windows` | Continuously stream Windows AD security XML into `logs-mysyslog` (stop with Ctrl-C) |
+| `task logsim-windows-elastic` | Continuously stream Elastic-format Windows Security events into `logs-system.security-default` (stop with Ctrl-C) |
 | `task logsim-asa-dict` | Stream Cisco ASA syslog into the dictionary-routed port from a fixed Docker IP |
 | `task logsim-ftd-dict` | Stream Cisco FTD syslog into the dictionary-routed port from a fixed Docker IP |
 | `task logsim-ics-dict` | Stream Cisco IOS syslog into the dictionary-routed port from a fixed Docker IP |
 | `task install-integrations` | Install Elastic integration packages and the syslog_router routing pipeline |
+| `task install-share-workflow` | Create the `share` space, `logs-system.security-share` data stream (template + ILM + pipeline), and the scheduled copy workflow |
+| `task run-share-workflow` | Trigger the Windows Security share workflow manually |
+| `task install-share-access` | Create the `share_viewer` role and `share_user` demo account |
 | `task exec` | Open an interactive shell inside the running Logstash container |
 | `task clean` | Remove containers, networks, and volumes |
 
@@ -324,6 +396,7 @@ Environment variables are read from `.env` automatically by Docker Compose. They
 | `LOGSTASH_SYSLOG_ROUTER_PORT` | `1515` | Host port for the syslog-router tagged TCP input |
 | `LOGSTASH_SYSLOG_DICT_PORT` | `1516` | Host port for the source-IP dictionary-routed TCP input |
 | `LOGSTASH_MYSYSLOG_PORT` | `1517` | Host port for the raw syslog passthrough TCP input |
+| `LOGSTASH_WINDOWS_PORT` | `1518` | Host port for the Elastic-format Windows Security JSON input |
 | `LOGSTASH_API_PORT` | `9600` | Host port for the Logstash monitoring API |
 | `PIPELINE_DIR` | `./pipeline` | Host directory containing pipeline `.conf` files |
 | `LOGSIM` | `git+https://github.com/matthew-hollick/log-simulators` | Git URL for log-simulators |
@@ -337,6 +410,8 @@ The pipeline in `pipeline/*.conf` sends events to the `elastic` user at `http://
 Events received on port `1516` are routed by the sender's source IP using `config/syslog-sources.csv`. The Logstash `tcp` input stores the source address in `[@metadata][input][tcp][source][ip]` when ECS compatibility is enabled, and the `translate` filter looks it up. Matched events are written to the corresponding integration data stream and unmatched events fall through to `logs-generic-default`.
 
 Events received on port `1517` are written directly to the `logs-mysyslog` index without parsing or routing. The complete syslog line is preserved in the `message` field.
+
+Events received on port `1518` are decoded as JSON and routed to the `logs-system.security-default` data stream, where the System integration's ingest pipeline enriches them into ECS. This route expects the `elastic` output format from `logsim-windows` (Winlogbeat-shaped `winlog.*` fields); raw Windows XML is not decoded here — send that to port `1517` instead.
 
 > **Note:** When Logstash is running inside Docker with published ports, Docker rewrites the source IP of incoming connections to the gateway address of the Docker network. The `logsim-*-dict` tasks avoid this by running simulators in ephemeral containers attached to the dedicated `logsim` Docker network, each with a fixed IP that the dictionary recognises.
 

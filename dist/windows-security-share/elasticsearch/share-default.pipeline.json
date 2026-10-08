@@ -1,0 +1,11 @@
+{
+  "description": "Marks documents written to the share data stream",
+  "processors": [
+    {
+      "set": {
+        "field": "shared",
+        "value": "shared"
+      }
+    }
+  ]
+}

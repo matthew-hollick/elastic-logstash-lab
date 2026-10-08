@@ -1,0 +1,29 @@
+{
+  "index_patterns": ["logs-system.security-share"],
+  "data_stream": {},
+  "priority": 500,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.lifecycle.name": "windows-security-share-ilm",
+      "index.default_pipeline": "share-default"
+    },
+    "mappings": {
+      "properties": {
+        "@timestamp": { "type": "date" },
+        "shared": { "type": "keyword" },
+        "event": {
+          "properties": {
+            "code":    { "type": "keyword" },
+            "action":  { "type": "keyword" },
+            "outcome": { "type": "keyword" }
+          }
+        },
+        "user":   { "properties": { "name": { "type": "keyword" } } },
+        "source": { "properties": { "ip": { "type": "ip" } } },
+        "winlog": { "properties": { "computer_name": { "type": "keyword" } } }
+      }
+    }
+  }
+}

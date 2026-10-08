@@ -1,0 +1,6 @@
+{
+  "password": "changeme",
+  "roles": ["share_viewer"],
+  "full_name": "Share Viewer",
+  "email": "share@example.com"
+}

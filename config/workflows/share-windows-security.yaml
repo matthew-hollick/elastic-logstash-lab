@@ -1,0 +1,44 @@
+name: Share Windows Security events
+description: >-
+  Every 10 minutes, copy the last 70 minutes of Windows Security events from
+  logs-system.security-default into the logs-system.security-share data
+  stream. The 60-minute lookback overlaps the 10-minute schedule so events
+  arriving late are still picked up; _id is preserved and conflicts=proceed
+  skips already-copied events, making re-runs idempotent. Only a minimal
+  share-safe field set is copied - no agent, ecs, or ingest metadata.
+enabled: true
+tags: ["share", "windows", "system.security"]
+
+triggers:
+  - type: scheduled
+    with:
+      every: 10m
+  - type: manual
+
+steps:
+  - name: copy_recent_windows_events
+    type: elasticsearch.request
+    with:
+      method: POST
+      path: /_reindex?wait_for_completion=true
+      body:
+        conflicts: proceed
+        source:
+          index: logs-system.security-default
+          _source:
+            - "@timestamp"
+            - "event.code"
+            - "event.action"
+            - "event.outcome"
+            - "user.name"
+            - "source.ip"
+            - "winlog.computer_name"
+          query:
+            range:
+              "@timestamp":
+                gte: now-70m
+        dest:
+          index: logs-system.security-share
+          # data streams only accept create ops; re-copied _ids then
+          # surface as version_conflicts, which conflicts=proceed skips
+          op_type: create

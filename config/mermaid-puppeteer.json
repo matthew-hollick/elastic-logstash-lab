@@ -1,0 +1,4 @@
+{
+  "executablePath": "/home/mjh.guest/.cache/ms-playwright/chromium_headless_shell-1234/chrome-linux/headless_shell",
+  "args": ["--no-sandbox", "--disable-setuid-sandbox"]
+}
